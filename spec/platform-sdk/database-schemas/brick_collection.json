@@ -1,0 +1,144 @@
+{
+  "id": "102019c6495fd0675fd8db191ce742bd8a5",
+  "version": "102019c6495fd06756aab8baa0cff1a9e5e",
+  "schema": {
+    "name": "brick_collection",
+    "description": "Stores user scanned brick inventory.",
+    "fields": [
+      {
+        "name": "id",
+        "description": "Unique identifier for the brick collection record.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 1,
+          "reason": "System identifier"
+        }
+      },
+      {
+        "name": "data_creator",
+        "description": "id of the user who creates the record",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal auditing"
+        }
+      },
+      {
+        "name": "data_updater",
+        "description": "id of the user who updates the record",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal auditing"
+        }
+      },
+      {
+        "name": "create_time",
+        "description": "create time in timestamp unix",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 1,
+          "reason": "System timestamp"
+        },
+        "format": "timestamp"
+      },
+      {
+        "name": "update_time",
+        "description": "update time in timestamp unix",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 1,
+          "reason": "System timestamp"
+        },
+        "format": "timestamp"
+      },
+      {
+        "name": "user_id",
+        "description": "Identifier of the user who owns this brick collection.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "User identification for multi-tenancy"
+        }
+      },
+      {
+        "name": "brick_type",
+        "description": "The type or mold of the LEGO brick (e.g., 2x4 Brick).",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 1,
+          "reason": "General product information"
+        }
+      },
+      {
+        "name": "color",
+        "description": "The color of the brick.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 1,
+          "reason": "General product information"
+        }
+      },
+      {
+        "name": "quantity",
+        "description": "The number of bricks of this type and color.",
+        "type": 2,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "User inventory data"
+        },
+        "numeric": "int"
+      }
+    ],
+    "indexes": [
+      {
+        "fields": [
+          "id"
+        ],
+        "unique": true,
+        "primary": true,
+        "order": false
+      },
+      {
+        "fields": [
+          "user_id"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "brick_type",
+          "color",
+          "user_id"
+        ],
+        "unique": true,
+        "order": false
+      },
+      {
+        "fields": [
+          "data_creator"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "data_updater"
+        ],
+        "order": false
+      }
+    ]
+  },
+  "task": {
+    "id": "699294027b0ea7c1d61a72b2",
+    "root": "699294027b0ea7c1d61a72b2",
+    "project": "6993af746bd96e563a126d71",
+    "user": "d8d1d3a0-6031-703b-7c0d-18e61bb68927"
+  },
+  "namespace": {
+    "id": "01987547fc6c72ecb453bd2736bd4ea0",
+    "tenant": 2,
+    "name": "global-1",
+    "default": true
+  },
+  "revision": 1
+}

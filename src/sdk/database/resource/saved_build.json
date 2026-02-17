@@ -1,0 +1,178 @@
+{
+  "id": "102019c68e565fe78bbba35a8920a9cfd04",
+  "version": "102019c68e565fe745cbb6af0c5c375337b",
+  "schema": {
+    "name": "saved_build",
+    "description": "Stores user LEGO build projects.",
+    "fields": [
+      {
+        "name": "id",
+        "description": "Unique identifier for the saved build.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 1,
+          "reason": "System identifier"
+        }
+      },
+      {
+        "name": "data_creator",
+        "description": "id of the user who creates the record",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal auditing"
+        }
+      },
+      {
+        "name": "data_updater",
+        "description": "id of the user who updates the record",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal auditing"
+        }
+      },
+      {
+        "name": "create_time",
+        "description": "create time in timestamp unix",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 1,
+          "reason": "System timestamp"
+        },
+        "format": "timestamp"
+      },
+      {
+        "name": "update_time",
+        "description": "update time in timestamp unix",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 1,
+          "reason": "System timestamp"
+        },
+        "format": "timestamp"
+      },
+      {
+        "name": "user_id",
+        "description": "Identifier of the user who owns this build.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "User identification"
+        }
+      },
+      {
+        "name": "title",
+        "description": "Title of the build project.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "User generated content"
+        }
+      },
+      {
+        "name": "description",
+        "description": "Description of the build project.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "User generated content"
+        },
+        "nullable": true
+      },
+      {
+        "name": "difficulty_level",
+        "description": "Difficulty level of the build.",
+        "type": 100,
+        "compliance": {
+          "confidentiality": 1,
+          "reason": "Public categorization"
+        },
+        "enumeration": [
+          {
+            "value": "Unspecified"
+          },
+          {
+            "number": 1,
+            "value": "Easy"
+          },
+          {
+            "number": 2,
+            "value": "Medium"
+          },
+          {
+            "number": 3,
+            "value": "Hard"
+          }
+        ]
+      },
+      {
+        "name": "brick_count",
+        "description": "Total number of bricks in the build.",
+        "type": 2,
+        "compliance": {
+          "confidentiality": 1,
+          "reason": "Build metadata"
+        },
+        "numeric": "int"
+      },
+      {
+        "name": "image_url",
+        "description": "Optional URL to an image of the build.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "User resource location"
+        },
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "fields": [
+          "id"
+        ],
+        "unique": true,
+        "primary": true,
+        "order": false
+      },
+      {
+        "fields": [
+          "user_id"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "difficulty_level"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "data_creator"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "data_updater"
+        ],
+        "order": false
+      }
+    ]
+  },
+  "task": {
+    "id": "6993af746bd96e563a126d72",
+    "root": "6993af746bd96e563a126d72",
+    "project": "6993af746bd96e563a126d71",
+    "user": "d8d1d3a0-6031-703b-7c0d-18e61bb68927"
+  },
+  "namespace": {
+    "id": "01987547fc6c72ecb453bd2736bd4ea0",
+    "tenant": 2,
+    "name": "global-1",
+    "default": true
+  },
+  "revision": 1
+}
