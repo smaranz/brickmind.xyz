@@ -3,7 +3,7 @@
 import * as TabsPrimitive from "@radix-ui/react-tabs";
 import type * as React from "react";
 
-import { useDelegatedComponentEventHandler } from "@/sdk/core/internal/creao-shell";
+import { useDelegatedComponentEventHandler } from "@/sdk/core/internal/shell";
 
 import { cn } from "@/lib/utils";
 

@@ -9,7 +9,7 @@
 import { MCP_SERVERS, type McpServerId } from "../constants/mcp-server";
 import { getAuthTokenAsync, isAuthenticatedSync } from "./auth";
 import { APP_CONFIG } from "./global";
-import { reportToParentWindow } from "./internal/creao-shell";
+import { reportToParentWindow } from "./internal/shell";
 import type { IFrameMessage } from "./internal/internal-types";
 import { platformRequest } from "./request";
 
@@ -74,12 +74,12 @@ async function internalCallService(
 		const headers: Record<string, string> = {
 			"Content-Type": "application/json",
 			Authorization: `Bearer ${token}`,
-			"X-CREAO-MCP-ID": mcpId,
+			"X-APP-MCP-ID": mcpId,
 		};
 
 		const { taskId, projectId } = APP_CONFIG;
-		if (taskId) headers["X-CREAO-API-TASK-ID"] = taskId;
-		if (projectId) headers["X-CREAO-API-PROJECT-ID"] = projectId;
+		if (taskId) headers["X-APP-API-TASK-ID"] = taskId;
+		if (projectId) headers["X-APP-API-PROJECT-ID"] = projectId;
 
 		const response = await platformRequest("/execute-mcp/v2", {
 			method: "POST",

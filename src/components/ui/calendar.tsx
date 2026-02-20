@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import {
 	reportElementError,
 	useDelegatedComponentEventHandler,
-} from "@/sdk/core/internal/creao-shell";
+} from "@/sdk/core/internal/shell";
 
 /**
  * Calendar component using react-day-picker

@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import type { BrickPart, BuildData, ModelOption, BuildStep } from '@/hooks/use-app-store';
+import { getLDrawColor } from '@/lib/ldraw-parser';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // I. MATHEMATICAL CONSTANTS (LDU GRID SYSTEM)
@@ -49,6 +50,74 @@ export interface PhysicsValidationResult {
   errors: string[];
   warnings: string[];
 }
+
+interface KimiPartPayload {
+  partId: string;
+  colorCode: number;
+  position: { x: number; y: number; z: number };
+  rotation?: { x?: number; y?: number; z?: number };
+  step?: number;
+}
+
+interface KimiBuildGuideStepPayload {
+  step: number;
+  yLevel?: number;
+  title?: string;
+  description?: string;
+}
+
+interface KimiModelPayload {
+  modelName?: string;
+  gridSystem?: string;
+  parts?: KimiPartPayload[];
+  meta?: {
+    totalParts?: number;
+    estimatedBuildTime?: string;
+  };
+  buildGuide?: {
+    inventory?: Array<{ partId: string; colorCode: number; qty: number }>;
+    steps?: KimiBuildGuideStepPayload[];
+  };
+}
+
+interface PartSpec {
+  name: string;
+  shape: BrickPart['shape'];
+  widthStuds: number;
+  depthStuds: number;
+  heightLdu: number;
+}
+
+interface SanitizedGeneratedPart {
+  id: string;
+  partId: string;
+  inventoryId: string;
+  colorCode: number;
+  colorName: string;
+  colorHex: string;
+  shape: BrickPart['shape'];
+  position: { x: number; y: number; z: number };
+  size: { w: number; h: number; d: number };
+  rotationY: 0 | 90 | 180 | 270;
+  step: number;
+}
+
+const PART_SPECS: Record<string, PartSpec> = {
+  '3001': { name: 'Brick 2x4', shape: 'brick', widthStuds: 4, depthStuds: 2, heightLdu: 24 },
+  '3003': { name: 'Brick 2x2', shape: 'brick', widthStuds: 2, depthStuds: 2, heightLdu: 24 },
+  '3004': { name: 'Brick 1x2', shape: 'brick', widthStuds: 2, depthStuds: 1, heightLdu: 24 },
+  '3005': { name: 'Brick 1x1', shape: 'brick', widthStuds: 1, depthStuds: 1, heightLdu: 24 },
+  '3010': { name: 'Brick 1x4', shape: 'brick', widthStuds: 4, depthStuds: 1, heightLdu: 24 },
+  '3020': { name: 'Plate 2x4', shape: 'plate', widthStuds: 4, depthStuds: 2, heightLdu: 24 },
+  '3022': { name: 'Plate 2x2', shape: 'plate', widthStuds: 2, depthStuds: 2, heightLdu: 24 },
+  '3023': { name: 'Plate 1x2', shape: 'plate', widthStuds: 2, depthStuds: 1, heightLdu: 24 },
+  '3024': { name: 'Plate 1x1', shape: 'plate', widthStuds: 1, depthStuds: 1, heightLdu: 24 },
+  '3710': { name: 'Plate 1x4', shape: 'plate', widthStuds: 4, depthStuds: 1, heightLdu: 24 },
+  '54200': { name: 'Slope 30 1x1x2/3', shape: 'slope', widthStuds: 1, depthStuds: 1, heightLdu: 24 },
+  '6000': { name: 'Wheel 18 x 14', shape: 'round', widthStuds: 2, depthStuds: 2, heightLdu: 24 },
+};
+
+const DEFAULT_PART_ID = '3001';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // III. THE "CRITIC" AGENT - PHYSICS VALIDATION ENGINE
@@ -604,6 +673,507 @@ export class BrickMindCreatorEngine {
   // Utility functions
   private hashString(str: string): number {
     return str.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  }
+
+  /**
+   * Generate a build using live Kimi model output (JSON-only contract).
+   */
+  async generateAIBuild(prompt: string, brickLimit = 200): Promise<BuildData> {
+    const normalizedPrompt = prompt.trim();
+    if (!normalizedPrompt) {
+      throw new Error('Build prompt is required.');
+    }
+
+    const limit = Math.max(1, Math.min(2000, Math.floor(brickLimit)));
+    const sessionSeed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+
+    const systemPrompt = `You are a LDraw Architect. You must generate a 3D model based on the user's prompt.
+Rule 1 (The Grid): All parts must snap to the LDraw Grid. X and Z coordinates must be multiples of 20. Y coordinates must be multiples of 24.
+Rule 2 (Connectivity): Every part must physically touch at least one other part. No floating bricks. Build from the ground up (Y=0).
+Rule 3 (Validity): Use only standard LDraw Part IDs (e.g., 3001, 3003, 3020, 6000, 3004, 3005, 3010, 3022, 3023, 3024, 3710, 54200).
+Rule 4 (Context): If the user asks for a dragon, approximate organic curves with slopes and hinges. If the user asks for a city, bias toward large plates/bricks.
+Rule 5 (Output): Return ONLY valid JSON. Do not include markdown, prose, or explanations.
+
+Use this exact JSON contract:
+{
+  "modelName": "Generated_Structure_ID_[TIMESTAMP]",
+  "gridSystem": "LDU_Standard",
+  "parts": [
+    {
+      "partId": "3001",
+      "colorCode": 4,
+      "position": { "x": 0, "y": 0, "z": 0 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "step": 1
+    }
+  ],
+  "meta": {
+    "totalParts": 1,
+    "estimatedBuildTime": "1 min"
+  },
+  "buildGuide": {
+    "inventory": [
+      { "partId": "3001", "colorCode": 4, "qty": 1 }
+    ],
+    "steps": [
+      { "step": 1, "yLevel": 0, "title": "Base/Chassis", "description": "Build the foundation layer." }
+    ]
+  }
+}`;
+
+    const userPrompt = `Prompt: ${normalizedPrompt}
+Brick limit: ${limit}
+Random seed: ${sessionSeed}
+Generate a fresh interpretation for this seed.`;
+
+    const { requestNvidiaChat } = await import('@/lib/nvidia-ai');
+    const response = await requestNvidiaChat({
+      body: {
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0.8,
+        top_p: 0.95,
+        max_tokens: 4096,
+        chat_template_kwargs: { thinking: false },
+      },
+    });
+
+    if (response.error || !response.data?.choices?.[0]?.message?.content) {
+      throw new Error('Kimi generation request failed.');
+    }
+
+    const aiPayload = this.parseKimiPayload(response.data.choices[0].message.content);
+    const sanitizedParts = this.sanitizeGeneratedParts(aiPayload.parts ?? [], limit);
+
+    if (sanitizedParts.length === 0) {
+      throw new Error('Kimi returned no valid parts for this prompt.');
+    }
+
+    const partsList = this.buildInventoryFromParts(sanitizedParts);
+    const steps = this.buildLayerSteps(sanitizedParts, aiPayload.buildGuide?.steps);
+
+    const modelName = (aiPayload.modelName || `Generated_Structure_ID_${Date.now()}`).trim();
+    const estimatedTime = this.parseEstimatedMinutes(aiPayload.meta?.estimatedBuildTime, sanitizedParts.length);
+    const difficulty = this.mapDifficulty(sanitizedParts.length);
+
+    const primaryBricks = sanitizedParts.map((part, idx) => ({
+      id: part.id,
+      partId: part.inventoryId,
+      color: part.colorName,
+      colorHex: part.colorHex,
+      position: part.position,
+      size: part.size,
+      rotation: part.rotationY,
+      delay: idx * 30,
+    }));
+
+    const variantBricks = primaryBricks.map((brick, idx) => ({
+      ...brick,
+      id: `v2_${idx}`,
+      rotation: ((brick.rotation + 180) % 360),
+    }));
+
+    const primaryModel: ModelOption = {
+      name: modelName,
+      subtitle: 'Live Kimi generation',
+      partCount: primaryBricks.length,
+      difficulty,
+      estimatedTime,
+      bricks: primaryBricks,
+    };
+
+    const secondaryModel: ModelOption = {
+      name: `${modelName} Variant`,
+      subtitle: 'Alternate orientation',
+      partCount: variantBricks.length,
+      difficulty,
+      estimatedTime,
+      bricks: variantBricks,
+    };
+
+    return {
+      prompt: normalizedPrompt,
+      brickLimit: limit,
+      partsList,
+      steps,
+      modelOptions: [primaryModel, secondaryModel],
+    };
+  }
+
+  private parseKimiPayload(rawContent: string): KimiModelPayload {
+    const cleaned = rawContent.replace(/```json|```/gi, '').trim();
+    const parsed = this.parseJsonObject(cleaned);
+
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('Kimi response was not a valid JSON object.');
+    }
+
+    const payload = parsed as KimiModelPayload;
+    if (!Array.isArray(payload.parts)) {
+      throw new Error('Kimi response missing required "parts" array.');
+    }
+
+    return payload;
+  }
+
+  private parseJsonObject(content: string): unknown {
+    try {
+      return JSON.parse(content);
+    } catch {
+      const firstBrace = content.indexOf('{');
+      const lastBrace = content.lastIndexOf('}');
+      if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+        throw new Error('Unable to parse JSON from Kimi response.');
+      }
+      return JSON.parse(content.slice(firstBrace, lastBrace + 1));
+    }
+  }
+
+  private sanitizeGeneratedParts(parts: KimiPartPayload[], limit: number): SanitizedGeneratedPart[] {
+    const cappedParts = parts.slice(0, limit);
+    const normalized = cappedParts.map((rawPart, idx) => {
+      const requestedPartId = typeof rawPart.partId === 'string' ? rawPart.partId.trim() : '';
+      const partId = PART_SPECS[requestedPartId] ? requestedPartId : DEFAULT_PART_ID;
+      const spec = PART_SPECS[partId];
+
+      const colorCode = Number.isFinite(rawPart.colorCode) ? Math.round(rawPart.colorCode) : 4;
+      const ldrawColor = getLDrawColor(colorCode);
+
+      const x = this.snapToGrid(this.toFinite(rawPart.position?.x, 0), LDU.GRID_SNAP_XZ);
+      const y = Math.abs(this.snapToGrid(this.toFinite(rawPart.position?.y, 0), LDU.BRICK_HEIGHT));
+      const z = this.snapToGrid(this.toFinite(rawPart.position?.z, 0), LDU.GRID_SNAP_XZ);
+
+      const rotationY = this.normalizeRotationY(rawPart.rotation?.y ?? 0);
+      const inventoryId = `${partId}-${colorCode}`;
+
+      return {
+        id: `ai_${idx}`,
+        partId,
+        inventoryId,
+        colorCode,
+        colorName: ldrawColor.name,
+        colorHex: ldrawColor.value,
+        shape: spec.shape,
+        position: { x, y, z },
+        size: {
+          w: spec.widthStuds * LDU.BRICK_UNIT,
+          h: spec.heightLdu,
+          d: spec.depthStuds * LDU.BRICK_UNIT,
+        },
+        rotationY,
+        step: Number.isFinite(rawPart.step) ? Math.round(rawPart.step as number) : idx + 1,
+      };
+    }).sort((a, b) => a.position.y - b.position.y || a.step - b.step);
+
+    const placed: SanitizedGeneratedPart[] = [];
+    normalized.forEach((candidate, idx) => {
+      let part: SanitizedGeneratedPart = {
+        ...candidate,
+        position: { ...candidate.position, y: idx === 0 ? 0 : candidate.position.y },
+      };
+
+      part = this.resolveCollisionPosition(part, placed);
+      part = this.ensureConnectedPlacement(part, placed);
+      part = this.resolveCollisionPosition(part, placed);
+
+      if (placed.length > 0 && !this.touchesAny(part, placed)) {
+        const anchor = placed[placed.length - 1];
+        part = {
+          ...part,
+          position: {
+            x: anchor.position.x,
+            y: this.snapToGrid(anchor.position.y + LDU.BRICK_HEIGHT, LDU.BRICK_HEIGHT),
+            z: anchor.position.z,
+          },
+        };
+        part = this.resolveCollisionPosition(part, placed);
+      }
+
+      placed.push(part);
+    });
+
+    return placed;
+  }
+
+  private ensureConnectedPlacement(
+    part: SanitizedGeneratedPart,
+    existing: SanitizedGeneratedPart[]
+  ): SanitizedGeneratedPart {
+    if (existing.length === 0) {
+      return {
+        ...part,
+        position: { ...part.position, y: 0 },
+      };
+    }
+
+    if (!this.collidesWithAny(part, existing) && this.touchesAny(part, existing)) {
+      return part;
+    }
+
+    const anchor = existing[existing.length - 1];
+    const sideOffsets = [
+      { x: (anchor.size.w + part.size.w) / 2, z: 0, y: 0 },
+      { x: -(anchor.size.w + part.size.w) / 2, z: 0, y: 0 },
+      { x: 0, z: (anchor.size.d + part.size.d) / 2, y: 0 },
+      { x: 0, z: -(anchor.size.d + part.size.d) / 2, y: 0 },
+      { x: 0, z: 0, y: LDU.BRICK_HEIGHT },
+    ];
+
+    for (const offset of sideOffsets) {
+      const candidate: SanitizedGeneratedPart = {
+        ...part,
+        position: {
+          x: this.snapToGrid(anchor.position.x + offset.x, LDU.GRID_SNAP_XZ),
+          y: this.snapToGrid(Math.max(0, anchor.position.y + offset.y), LDU.BRICK_HEIGHT),
+          z: this.snapToGrid(anchor.position.z + offset.z, LDU.GRID_SNAP_XZ),
+        },
+      };
+
+      if (!this.collidesWithAny(candidate, existing) && this.touchesAny(candidate, existing)) {
+        return candidate;
+      }
+    }
+
+    return {
+      ...part,
+      position: {
+        x: anchor.position.x,
+        y: this.snapToGrid(anchor.position.y + LDU.BRICK_HEIGHT, LDU.BRICK_HEIGHT),
+        z: anchor.position.z,
+      },
+    };
+  }
+
+  private resolveCollisionPosition(
+    part: SanitizedGeneratedPart,
+    existing: SanitizedGeneratedPart[]
+  ): SanitizedGeneratedPart {
+    if (!this.collidesWithAny(part, existing)) {
+      return part;
+    }
+
+    const maxRadius = 6;
+    for (let radius = 1; radius <= maxRadius; radius++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+          if (Math.abs(dx) !== radius && Math.abs(dz) !== radius) {
+            continue;
+          }
+
+          const candidate: SanitizedGeneratedPart = {
+            ...part,
+            position: {
+              x: this.snapToGrid(part.position.x + dx * LDU.GRID_SNAP_XZ, LDU.GRID_SNAP_XZ),
+              y: part.position.y,
+              z: this.snapToGrid(part.position.z + dz * LDU.GRID_SNAP_XZ, LDU.GRID_SNAP_XZ),
+            },
+          };
+
+          if (!this.collidesWithAny(candidate, existing)) {
+            if (existing.length === 0 || this.touchesAny(candidate, existing)) {
+              return candidate;
+            }
+          }
+        }
+      }
+    }
+
+    for (let i = existing.length - 1; i >= 0; i--) {
+      const anchor = existing[i];
+      const candidate: SanitizedGeneratedPart = {
+        ...part,
+        position: {
+          x: anchor.position.x,
+          y: this.snapToGrid(anchor.position.y + LDU.BRICK_HEIGHT, LDU.BRICK_HEIGHT),
+          z: anchor.position.z,
+        },
+      };
+      if (!this.collidesWithAny(candidate, existing) && this.touchesAny(candidate, existing)) {
+        return candidate;
+      }
+    }
+
+    return part;
+  }
+
+  private buildInventoryFromParts(parts: SanitizedGeneratedPart[]): BrickPart[] {
+    const inventory = new Map<string, BrickPart>();
+
+    parts.forEach((part) => {
+      const spec = PART_SPECS[part.partId] ?? PART_SPECS[DEFAULT_PART_ID];
+      const existing = inventory.get(part.inventoryId);
+      if (existing) {
+        existing.qty += 1;
+        return;
+      }
+      inventory.set(part.inventoryId, {
+        id: part.inventoryId,
+        name: spec.name,
+        color: part.colorName,
+        colorHex: part.colorHex,
+        qty: 1,
+        shape: part.shape,
+        width: spec.widthStuds,
+        height: spec.depthStuds,
+      });
+    });
+
+    return Array.from(inventory.values()).sort((a, b) => b.qty - a.qty || a.id.localeCompare(b.id));
+  }
+
+  private buildLayerSteps(
+    parts: SanitizedGeneratedPart[],
+    guidedSteps?: KimiBuildGuideStepPayload[]
+  ): BuildStep[] {
+    const guideByLayer = new Map<number, KimiBuildGuideStepPayload>();
+    (guidedSteps ?? []).forEach((step) => {
+      const layer = this.snapToGrid(this.toFinite(step.yLevel, 0), LDU.BRICK_HEIGHT);
+      guideByLayer.set(layer, step);
+    });
+
+    const layerMap = new Map<number, SanitizedGeneratedPart[]>();
+    parts.forEach((part) => {
+      const layer = part.position.y;
+      if (!layerMap.has(layer)) {
+        layerMap.set(layer, []);
+      }
+      layerMap.get(layer)?.push(part);
+    });
+
+    const layers = Array.from(layerMap.keys()).sort((a, b) => a - b);
+    return layers.map((layerY, idx) => {
+      const stepParts = layerMap.get(layerY) ?? [];
+      const guidedStep = guideByLayer.get(layerY);
+
+      return {
+        stepNum: idx + 1,
+        partsAdded: stepParts.map((part) => ({
+          partId: part.inventoryId,
+          position: part.position,
+          rotation: part.rotationY,
+        })),
+        description: guidedStep?.description?.trim()
+          || guidedStep?.title?.trim()
+          || this.defaultLayerTitle(idx, layers.length, layerY),
+        cameraAngle: {
+          rotateX: Math.max(-45, -25 + idx * 3),
+          rotateY: idx * 28,
+        },
+      };
+    });
+  }
+
+  private defaultLayerTitle(index: number, total: number, yLevel: number): string {
+    if (index === 0) {
+      return `Base/Chassis (Y=${yLevel})`;
+    }
+    if (index === total - 1) {
+      return `Roof/Details (Y=${yLevel})`;
+    }
+    return `Walls/Structure (Y=${yLevel})`;
+  }
+
+  private parseEstimatedMinutes(estimated: string | undefined, partCount: number): number {
+    const fromMeta = Number.parseInt((estimated || '').replace(/[^\d]/g, ''), 10);
+    if (Number.isFinite(fromMeta) && fromMeta > 0) {
+      return fromMeta;
+    }
+    return Math.max(1, Math.ceil(partCount * 0.6));
+  }
+
+  private mapDifficulty(partCount: number): ModelOption['difficulty'] {
+    if (partCount < 80) return 'Novice';
+    if (partCount > 180) return 'Expert';
+    return 'Intermediate';
+  }
+
+  private toFinite(value: unknown, fallback: number): number {
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  }
+
+  private snapToGrid(value: number, unit: number): number {
+    return Math.round(value / unit) * unit;
+  }
+
+  private normalizeRotationY(value: number): 0 | 90 | 180 | 270 {
+    const snapped = Math.round(value / 90) * 90;
+    const normalized = ((snapped % 360) + 360) % 360;
+    if (normalized === 90 || normalized === 180 || normalized === 270) {
+      return normalized;
+    }
+    return 0;
+  }
+
+  private collidesWithAny(part: SanitizedGeneratedPart, existing: SanitizedGeneratedPart[]): boolean {
+    return existing.some((other) => this.boxesOverlap(part, other));
+  }
+
+  private touchesAny(part: SanitizedGeneratedPart, existing: SanitizedGeneratedPart[]): boolean {
+    return existing.some((other) => this.areTouching(part, other));
+  }
+
+  private boxesOverlap(a: SanitizedGeneratedPart, b: SanitizedGeneratedPart): boolean {
+    const A = this.getBounds(a);
+    const B = this.getBounds(b);
+    const eps = 0.001;
+
+    return (
+      A.minX < B.maxX - eps &&
+      A.maxX > B.minX + eps &&
+      A.minY < B.maxY - eps &&
+      A.maxY > B.minY + eps &&
+      A.minZ < B.maxZ - eps &&
+      A.maxZ > B.minZ + eps
+    );
+  }
+
+  private areTouching(a: SanitizedGeneratedPart, b: SanitizedGeneratedPart): boolean {
+    const A = this.getBounds(a);
+    const B = this.getBounds(b);
+    const eps = 0.001;
+
+    const overlapX = this.overlaps1D(A.minX, A.maxX, B.minX, B.maxX, eps);
+    const overlapY = this.overlaps1D(A.minY, A.maxY, B.minY, B.maxY, eps);
+    const overlapZ = this.overlaps1D(A.minZ, A.maxZ, B.minZ, B.maxZ, eps);
+
+    const touchingY =
+      (Math.abs(A.maxY - B.minY) <= eps || Math.abs(B.maxY - A.minY) <= eps) &&
+      overlapX &&
+      overlapZ;
+    const touchingX =
+      (Math.abs(A.maxX - B.minX) <= eps || Math.abs(B.maxX - A.minX) <= eps) &&
+      overlapY &&
+      overlapZ;
+    const touchingZ =
+      (Math.abs(A.maxZ - B.minZ) <= eps || Math.abs(B.maxZ - A.minZ) <= eps) &&
+      overlapX &&
+      overlapY;
+
+    return touchingY || touchingX || touchingZ;
+  }
+
+  private overlaps1D(minA: number, maxA: number, minB: number, maxB: number, eps: number): boolean {
+    return minA < maxB - eps && maxA > minB + eps;
+  }
+
+  private getBounds(part: SanitizedGeneratedPart): {
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+    minZ: number;
+    maxZ: number;
+  } {
+    return {
+      minX: part.position.x - part.size.w / 2,
+      maxX: part.position.x + part.size.w / 2,
+      minY: part.position.y,
+      maxY: part.position.y + part.size.h,
+      minZ: part.position.z - part.size.d / 2,
+      maxZ: part.position.z + part.size.d / 2,
+    };
   }
 
   private createSeededRNG(seed: number): () => number {

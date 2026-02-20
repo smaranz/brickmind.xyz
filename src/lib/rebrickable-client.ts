@@ -146,8 +146,17 @@ export class RebrickableClient {
    * Get part silhouette (outline) for instruction manuals
    */
   getPartSilhouetteUrl(partNum: string): string {
-    // Rebrickable provides part outlines for instruction-style views
+    // Rebrickable specific LDraw render
     return `https://cdn.rebrickable.com/media/parts/ldraw/${partNum}.png`;
+  }
+
+  /**
+   * Get BrickLink image URL (often more reliable for standard parts)
+   */
+  getBrickLinkImageUrl(partNum: string, colorId: number = 0): string {
+    // BrickLink uses generic color 0 for "no color" / default
+    // We map LDraw colors to close BrickLink IDs if needed, but 0 is safe for shape.
+    return `https://img.bricklink.com/ItemImage/PN/${colorId}/${partNum}.png`;
   }
 }
 

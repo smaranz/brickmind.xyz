@@ -2,7 +2,7 @@
 
 import { AlertTriangle } from "lucide-react";
 import React, { type JSX, useReducer } from "react";
-import { reportError } from "@/sdk/core/internal/creao-shell";
+import { reportError } from "@/sdk/core/internal/shell";
 import { ScrollArea } from "./ui/scroll-area";
 
 interface ErrorBoundaryState {

@@ -7,13 +7,16 @@
  * Usage in built pages:
  * 1. Include this file in your built application
  * 3. Use await getAuthTokenAsync() to get the current token for API calls
- * 4. Or use the useCreaoAuth() hook in React components
+ * 4. Or use the useAuth() hook in React components
  */
 
 import { create } from "zustand";
 
+const AUTH_STORAGE_KEY = "app_auth_token";
+const AUTH_MESSAGE_TYPE = "APP_AUTH_TOKEN";
+
 interface AuthMessage {
-	type: "CREAO_AUTH_TOKEN";
+	type: typeof AUTH_MESSAGE_TYPE;
 	token: string;
 	origin: string;
 }
@@ -109,7 +112,7 @@ const useAuthStore = create<AuthStore>(
 				});
 
 				// Store in localStorage for persistence
-				localStorage.setItem("creao_auth_token", token);
+				localStorage.setItem(AUTH_STORAGE_KEY, token);
 			} else {
 				// Token is invalid, clear it
 				set({
@@ -117,7 +120,7 @@ const useAuthStore = create<AuthStore>(
 					status: "invalid_token",
 					parentOrigin: origin || get().parentOrigin,
 				});
-				localStorage.removeItem("creao_auth_token");
+				localStorage.removeItem(AUTH_STORAGE_KEY);
 			}
 		},
 
@@ -128,7 +131,7 @@ const useAuthStore = create<AuthStore>(
 				status: "unauthenticated",
 				parentOrigin: null,
 			});
-			localStorage.removeItem("creao_auth_token");
+			localStorage.removeItem(AUTH_STORAGE_KEY);
 		},
 
 		// Refresh authentication state by re-validating the current token
@@ -142,7 +145,7 @@ const useAuthStore = create<AuthStore>(
 			const isValid = await validateToken(token);
 			if (!isValid) {
 				set({ status: "invalid_token" });
-				localStorage.removeItem("creao_auth_token");
+				localStorage.removeItem(AUTH_STORAGE_KEY);
 				return false;
 			}
 
@@ -189,7 +192,7 @@ async function initializeFromStorage(
 	set: (state: Partial<AuthStore>) => void,
 ): Promise<void> {
 	console.log("Initializing auth from storage...");
-	const storedToken = localStorage.getItem("creao_auth_token");
+	const storedToken = localStorage.getItem(AUTH_STORAGE_KEY);
 	if (storedToken) {
 		console.log("Found stored token, validating...");
 		const { validateToken } = get();
@@ -202,7 +205,7 @@ async function initializeFromStorage(
 			});
 		} else {
 			console.log("Stored token is invalid, clearing...");
-			localStorage.removeItem("creao_auth_token");
+			localStorage.removeItem(AUTH_STORAGE_KEY);
 			set({ status: "invalid_token" });
 		}
 	} else {
@@ -234,7 +237,7 @@ function setupMessageListener(get: () => AuthStore): void {
 		try {
 			const data = event.data as AuthMessage;
 
-			if (data?.type === "CREAO_AUTH_TOKEN" && data.token) {
+			if (data?.type === AUTH_MESSAGE_TYPE && data.token) {
 				const { setToken } = get();
 				await setToken(data.token, event.origin);
 			}
@@ -270,7 +273,7 @@ async function ensureInitialized(): Promise<void> {
  * React hook for using authentication state
  * @returns Authentication state and helper methods
  */
-export function useCreaoAuth() {
+export function useAuth() {
 	const token = useAuthStore((state) => state.token);
 	const status = useAuthStore((state) => state.status);
 	const parentOrigin = useAuthStore((state) => state.parentOrigin);
@@ -289,6 +292,9 @@ export function useCreaoAuth() {
 		refreshAuth,
 	};
 }
+
+/** @deprecated Use useAuth instead */
+export const useCreaoAuth = useAuth;
 
 /**
  * Initialize authentication integration for built pages

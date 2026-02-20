@@ -7,9 +7,9 @@ declare global {
 	}
 }
 
-export const APP_CONFIG = initializeCreaoSDK();
+export const APP_CONFIG = initializeAppSDK();
 
-function initializeCreaoSDK() {
+function initializeAppSDK() {
 	const config = parseCurrentUrl();
 	window.APP_CONFIG = config;
 

@@ -10,7 +10,7 @@
     "test": "vitest run --config vitest.config.js test/template-tests/suites",
     "test:smoke": "vitest run --config vitest.config.js test/template-tests/smoke",
     "check": "tsgo --noEmit && npm run lint:radix -- --fix && npm run format",
-    "check:safe": "timeout 20 npm run check || (echo 'Check timed out after 20 seconds' && exit 1)",
+    "check:safe": "node --input-type=module -e \"import { spawn } from 'node:child_process'; const p = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run','check'], { stdio: 'inherit' }); const timer = setTimeout(() => { p.kill('SIGTERM'); console.error('Check timed out after 20 seconds'); process.exit(1); }, 20000); p.on('exit', (code) => { clearTimeout(timer); process.exit(code ?? 1); });\"",
     "format": "biome check --write --unsafe",
     "format:quiet": "biome check --write --unsafe --log-level=warn",
     "lint:radix": "grep -l -r '<SelectItem' src | xargs eslint --config config/eslint/eslint.radix.config.js",
@@ -129,7 +129,6 @@
     "dictionaryDefinitions": [],
     "dictionaries": [],
     "words": [
-      "creao",
       "e2b"
     ],
     "ignoreWords": [],

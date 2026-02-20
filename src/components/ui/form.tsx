@@ -131,7 +131,7 @@ function FormControl({ ...props }: React.ComponentProps<typeof Slot>) {
 	React.useEffect(() => {
 		if (error) {
 			// Import and use reportElementError dynamically to avoid circular dependencies
-			import("@/sdk/core/internal/creao-shell").then(
+			import("@/sdk/core/internal/shell").then(
 				({ reportElementError }) => {
 					const element = document.getElementById(formItemId) || document.body;
 					reportElementError(element, error, {

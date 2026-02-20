@@ -1,7 +1,6 @@
 import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { FloatingBanner } from "@/components/FloatingBanner";
 
 export const Route = createRootRoute({
 	component: Root,
@@ -14,7 +13,6 @@ function Root() {
 				<Outlet />
 			</ErrorBoundary>
 			<TanStackRouterDevtools position="bottom-right" />
-			<FloatingBanner position="bottom-left" />
 		</div>
 	);
 }

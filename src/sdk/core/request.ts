@@ -1,5 +1,5 @@
 import { getAuthTokenAsync } from "./auth";
-import { reportToParentWindow } from "./internal/creao-shell";
+import { reportToParentWindow } from "./internal/shell";
 
 const MCP_API_BASE_PATH = import.meta.env.VITE_MCP_API_BASE_PATH;
 

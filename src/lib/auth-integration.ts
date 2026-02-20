@@ -2,7 +2,7 @@
  * Authentication Integration Utilities (Legacy Compatibility Layer)
  *
  * This file provides backward-compatible exports for the authentication system.
- * The actual implementation has been migrated to creao-platform/auth.ts
+ * The actual implementation lives in @/sdk/core/auth.ts
  *
  * @deprecated This file is maintained for backward compatibility.
  * New code should import directly from '@/sdk/core/auth' and '@/sdk/core/request'

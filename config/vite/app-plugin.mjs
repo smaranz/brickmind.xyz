@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 /**
  * @returns {import('vite').Plugin[]}
  */
-export const creaoPlugins = () => [
+export const appPlugins = () => [
   babel({
     enforce: "pre",
     include: ["src/**/*"],
@@ -29,15 +29,14 @@ export const creaoPlugins = () => [
     },
   }),
   {
-    // add alias to config
-    name: 'creao-plugin',
-    enforce: 'post',
+    name: "app-plugin",
+    enforce: "post",
     config(config) {
-      const rolldownOptions = config.optimizeDeps.esbuildOptions
-      config.optimizeDeps.esbuildOptions = undefined
+      const rolldownOptions = config.optimizeDeps.esbuildOptions;
+      config.optimizeDeps.esbuildOptions = undefined;
       return {
         optimizeDeps: {
-          rolldownOptions
+          rolldownOptions,
         },
         resolve: {
           alias: {
@@ -47,7 +46,7 @@ export const creaoPlugins = () => [
             ),
           },
         },
-      }
-    }
-  }
-]
+      };
+    },
+  },
+];

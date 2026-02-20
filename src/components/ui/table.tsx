@@ -2,7 +2,7 @@ import type * as React from "react";
 import { useCallback } from "react";
 
 import { cn } from "@/lib/utils";
-import { useDelegatedComponentEventHandler } from "@/sdk/core/internal/creao-shell";
+import { useDelegatedComponentEventHandler } from "@/sdk/core/internal/shell";
 
 function Table({
 	className,

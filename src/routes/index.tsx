@@ -50,8 +50,10 @@ import {
   type ModelOption,
   useAppStore,
 } from "@/hooks/use-app-store";
-import { requestOpenAIGPTChat } from "@/sdk/api-clients/688a0b64dc79a2533460892c/requestOpenAIGPTChat";
-import { requestOpenAIGPTVision } from "@/sdk/api-clients/68a5655cdeb2a0b2f64c013d/requestOpenAIGPTVision";
+import { useAuthStore } from "@/hooks/use-auth-store";
+import { requestNvidiaChat } from "@/lib/nvidia-ai";
+import { requestNvidiaVision } from "@/lib/nvidia-ai";
+import { AuthScreen } from "@/components/auth/AuthScreen";
 import {
   ChatMessageORM,
   ChatMessageRole,
@@ -62,7 +64,7 @@ import { SavedBuildORM } from "@/sdk/database/orm/orm_saved_build";
 import { ScanHistoryORM } from "@/sdk/database/orm/orm_scan_history";
 import type { ScanHistoryModel } from "@/sdk/database/orm/orm_scan_history";
 import { BrickMindEngine } from "@/lib/brickmind-engine";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { rebrickableClient, getStandardPartNumber, getColorIdFromName } from "@/lib/rebrickable-client";
 import {
   type CatalogEntry,
@@ -71,6 +73,7 @@ import {
   searchParts as ldrawSearchParts,
   loadCommonParts,
   getLDrawColor,
+  getCatalogTotalCount,
 } from "@/lib/ldraw-parser";
 
 export const Route = createFileRoute("/")({
@@ -438,8 +441,8 @@ function BuildInstructionsSection() {
                     idx < currentStep
                       ? "bg-green-500 text-white shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]"
                       : idx === currentStep
-                      ? "bg-yellow-400 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] animate-pulse"
-                      : "bg-white text-gray-400"
+                        ? "bg-yellow-400 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] animate-pulse"
+                        : "bg-white text-gray-400"
                   )}
                 >
                   {idx < currentStep ? <Check className="h-4 w-4" /> : idx + 1}
@@ -464,39 +467,6 @@ function BuildInstructionsSection() {
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-// Falling brick component
-function FallingBrick({
-  color,
-  size,
-  style,
-  delay,
-}: {
-  color: string;
-  size: number;
-  style: React.CSSProperties;
-  delay: number;
-}) {
-  return (
-    <div
-      className={cn(
-        "absolute rounded-sm border-2 border-black/80",
-        color,
-      )}
-      style={{
-        width: size,
-        height: size * 0.6,
-        animation: `fallBrick ${4 + Math.random() * 2}s linear infinite`,
-        animationDelay: `${delay}s`,
-        ...style,
-      }}
-    >
-      {/* Add studs to make it look more like LEGO */}
-      <div className="absolute -top-1 left-1/4 h-2 w-2 rounded-full border border-black/40" style={{ backgroundColor: style.backgroundColor || color }} />
-      <div className="absolute -top-1 right-1/4 h-2 w-2 rounded-full border border-black/40" style={{ backgroundColor: style.backgroundColor || color }} />
     </div>
   );
 }
@@ -2071,7 +2041,7 @@ function CastleBuilding() {
       scene.add(tileStud);
     }
 
-    // ─── Garden patches (green studs near houses) ───
+    // ─── Garden patches (dirt only - plants/orchids removed for performance) ───
     const gardenPositions = [
       { x: -7.5, z: -2, w: 3, d: 2 },
       { x: 7.5, z: 0, w: 2, d: 3 },
@@ -2079,30 +2049,11 @@ function CastleBuilding() {
     ];
     gardenPositions.forEach(gp => {
       const gardenGroup = new THREE.Group();
-      // Dirt patch
       const dirtGeo = new THREE.BoxGeometry(gp.w, 0.06, gp.d);
       const dirtMat = plasticMat(0x6b5030);
       const dirt = new THREE.Mesh(dirtGeo, dirtMat);
       dirt.receiveShadow = true;
       gardenGroup.add(dirt);
-      // Green studs (plants)
-      const cols = Math.floor(gp.w / 0.4);
-      const rows = Math.floor(gp.d / 0.4);
-      const plantColors = [0x228b22, 0x32cd32, 0x006400, 0x00852b];
-      for (let gx = 0; gx < cols; gx++) {
-        for (let gz = 0; gz < rows; gz++) {
-          if (Math.random() > 0.6) continue; // sparse planting
-          const pc = plantColors[Math.floor(Math.random() * plantColors.length)];
-          const plantStud = createStud(pc);
-          plantStud.position.set(
-            (gx - (cols - 1) / 2) * 0.4,
-            0.05,
-            (gz - (rows - 1) / 2) * 0.4
-          );
-          plantStud.scale.setScalar(1.2);
-          gardenGroup.add(plantStud);
-        }
-      }
       gardenGroup.position.set(gp.x, 0.11, gp.z);
       gardenGroup.userData.originalPosition = gardenGroup.position.clone();
       gardenGroup.userData.isBrickGroup = true;
@@ -2535,10 +2486,22 @@ function Marquee() {
   );
 }
 
-function LandingPage() {
+function LandingPage({
+  onEnter,
+  onOpenAuth,
+  showAuthActions = false,
+}: {
+  onEnter?: () => void;
+  onOpenAuth?: (mode: "signin" | "signup") => void;
+  showAuthActions?: boolean;
+}) {
   const { setView, setIsTransitioning } = useAppStore();
 
   const handleEnter = () => {
+    if (onEnter) {
+      onEnter();
+      return;
+    }
     setIsTransitioning(true);
     setTimeout(() => {
       setView("dashboard");
@@ -2546,74 +2509,100 @@ function LandingPage() {
     }, 400);
   };
 
-  // Generate falling bricks with random positions
-  const fallingBricks = React.useMemo(() => {
-    const bricks = [];
-    const colors = ["#E3000B", "#0057A8", "#FFD700", "#00852B", "#FF7E14"];
-    for (let i = 0; i < 20; i++) {
-      bricks.push({
-        id: i,
-        color: colors[Math.floor(Math.random() * colors.length)],
-        size: 30 + Math.random() * 30,
-        left: `${Math.random() * 100}%`,
-        delay: Math.random() * 4,
-      });
-    }
-    return bricks;
-  }, []);
-
   return (
     <div className="relative flex min-h-screen flex-col bg-white">
       {/* Hero Section with Castle */}
       <div className="relative flex min-h-screen flex-col">
         {/* Top Half - Hero Content */}
-        <div className="relative flex-1 flex flex-col items-center justify-center px-4 text-center pb-8">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border-2 border-black bg-yellow-400 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-              <Boxes className="h-8 w-8 text-black" />
+        <div className="relative min-h-screen flex flex-col items-center justify-center px-4 text-center pb-20 pt-10 overflow-hidden z-10">
+          {showAuthActions && onOpenAuth && (
+            <div className="absolute right-4 top-4 z-20 flex items-center gap-2 sm:right-6 sm:top-6">
+              <button
+                type="button"
+                onClick={() => onOpenAuth("signin")}
+                className="rounded-xl border-2 border-black bg-white px-3 py-2 text-xs font-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:-translate-y-0.5 active:translate-y-0 active:shadow-none"
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenAuth("signup")}
+                className="rounded-xl border-2 border-black bg-red-500 px-3 py-2 text-xs font-black text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:-translate-y-0.5 active:translate-y-0 active:shadow-none"
+              >
+                Sign Up
+              </button>
             </div>
-            <span className="text-2xl font-black tracking-tight">BrickMind</span>
+          )}
+
+          {/* Brand Pill */}
+          <div className="mb-8 flex items-center gap-2 rounded-full border-2 border-black bg-red-600 px-5 py-2 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+            <Boxes className="h-5 w-5 text-white" />
+            <span className="text-sm font-black tracking-widest text-white uppercase">BrickMind</span>
           </div>
 
-          <h1 className="max-w-3xl text-4xl font-black leading-tight tracking-tight text-black sm:text-5xl md:text-6xl mb-6">
-            UNLEASH YOUR
+          <h1 className="max-w-4xl text-5xl font-black leading-tight tracking-tight text-gray-900 sm:text-6xl md:text-7xl mb-6">
+            Build the Future.
             <br />
-            <span className="relative">
-              <span className="relative z-10">BRICK POTENTIAL</span>
-              <span className="absolute bottom-1 left-0 -z-0 h-4 w-full bg-yellow-400 sm:h-5" />
-            </span>
+            <span className="text-red-600">Defy Gravity.</span>
           </h1>
 
-          <p className="max-w-md text-base text-gray-600 mb-6">
-            Scan your LEGO collection. Get AI-powered build suggestions. Create
-            something amazing.
+          <p className="max-w-xl text-lg text-gray-600 mb-10 font-medium leading-relaxed">
+            Describe what you want to build, and BrickMind will
+            generate step-by-step LEGO® instructions in real time.
           </p>
 
-          <button
-            onClick={handleEnter}
-            className="group relative rounded-2xl border-2 border-black bg-red-500 px-8 py-3 text-lg font-black text-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all hover:-translate-y-1 hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] active:translate-y-0 active:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
-          >
-            <span className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 transition-transform group-hover:rotate-12" />
-              START BUILDING
-              <Sparkles className="h-5 w-5 transition-transform group-hover:-rotate-12" />
-            </span>
-          </button>
-
-          <div className="mt-6 flex flex-wrap justify-center gap-4">
-            {[
-              { label: "Bricks Scanned", value: "10M+" },
-              { label: "Builds Created", value: "50K+" },
-              { label: "Master Builders", value: "12K+" },
-            ].map((stat) => (
-              <div
-                key={stat.label}
-                className="rounded-xl border-2 border-black bg-white px-3 py-2 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]"
-              >
-                <div className="text-lg font-black">{stat.value}</div>
-                <div className="text-xs text-gray-500">{stat.label}</div>
+          {/* Search Input Container */}
+          <div className="relative w-full max-w-2xl group">
+            <div className="absolute -inset-1 rounded-2xl bg-black opacity-100 blur-[0px] transition duration-200 group-hover:translate-x-1 group-hover:translate-y-1"></div>
+            <div className="relative flex items-center bg-white rounded-2xl border-2 border-black overflow-hidden shadow-sm">
+              <div className="pl-4 text-yellow-500">
+                <Sparkles className="h-5 w-5" />
               </div>
+              <input
+                type="text"
+                placeholder="Try &quot;Build a car&quot; or &quot;Build a spaceship&quot;..."
+                className="w-full px-4 py-4 text-lg font-bold outline-none placeholder:text-gray-300 placeholder:font-medium"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    useAppStore.getState().setBuildPrompt(e.currentTarget.value);
+                    handleEnter();
+                  }
+                }}
+              />
+              <button
+                onClick={() => handleEnter()}
+                className="m-2 p-2 rounded-xl bg-gray-100 hover:bg-black hover:text-white transition-colors border-2 border-transparent hover:border-black"
+              >
+                <ArrowLeft className="h-5 w-5 rotate-180" />
+              </button>
+            </div>
+          </div>
+
+          {/* Suggestion Chips */}
+          <div className="mt-8 flex flex-wrap justify-center gap-3">
+            {[
+              "Car", "House", "Tower", "Robot", "Spaceship"
+            ].map((label) => (
+              <button
+                key={label}
+                onClick={() => {
+                  useAppStore.getState().setBuildPrompt(`Build a ${label.toLowerCase()}`);
+                  handleEnter();
+                }}
+                className="flex items-center gap-2 rounded-xl border-2 border-black bg-white px-6 py-2.5 text-sm font-bold shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:-translate-y-1 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-0 active:shadow-none"
+              >
+                {label === "Car" && <div className="h-2 w-2 rounded-full bg-red-500" />}
+                {label === "House" && <div className="h-2 w-2 rounded-full bg-green-500" />}
+                {label === "Tower" && <div className="h-2 w-2 rounded-full bg-blue-500" />}
+                {label === "Robot" && <div className="h-2 w-2 rounded-full bg-yellow-500" />}
+                {label === "Spaceship" && <div className="h-2 w-2 rounded-full bg-purple-500" />}
+                {label}
+              </button>
             ))}
+          </div>
+
+          <div className="absolute bottom-10 left-0 right-0 animate-bounce">
+            <ChevronDown className="h-8 w-8 mx-auto text-gray-400" />
           </div>
         </div>
 
@@ -2743,6 +2732,7 @@ function VoiceWaveform() {
 
 function CameraModal() {
   const { setCameraOpen, addMessage, setAIStatus, sessionId } = useAppStore();
+  const authUserId = useAuthStore((state) => state.user?.id);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [preview, setPreview] = React.useState<string | null>(null);
   const [scanning, setScanning] = React.useState(false);
@@ -2762,6 +2752,9 @@ function CameraModal() {
       fileInputRef.current?.click();
       return;
     }
+    if (!authUserId) {
+      return;
+    }
     setScanning(true);
     setAIStatus("Scanning");
 
@@ -2779,7 +2772,7 @@ function CameraModal() {
     try {
       await chatOrm.insertChatMessage([
         {
-          user_id: "current-user",
+          user_id: authUserId,
           session_id: sessionId,
           role: ChatMessageRole.User,
           text_content: userMsg.content,
@@ -2790,7 +2783,7 @@ function CameraModal() {
     }
 
     try {
-      const result = await requestOpenAIGPTVision({
+      const result = await requestNvidiaVision({
         body: {
           messages: [
             {
@@ -2821,7 +2814,7 @@ function CameraModal() {
       try {
         await chatOrm.insertChatMessage([
           {
-            user_id: "current-user",
+            user_id: authUserId,
             session_id: sessionId,
             role: ChatMessageRole.Assistant,
             text_content: aiContent,
@@ -2830,7 +2823,7 @@ function CameraModal() {
         const scanOrm = ScanHistoryORM.getInstance();
         await scanOrm.insertScanHistory([
           {
-            user_id: "current-user",
+            user_id: authUserId,
             detected_bricks: aiContent.slice(0, 500),
           } as ScanHistoryModel,
         ]);
@@ -2923,6 +2916,8 @@ function CameraModal() {
 // ─── Settings Panel ──────────────────────────────────────────────────────────
 
 function SettingsPanel() {
+  const authUser = useAuthStore((state) => state.user);
+  const signOut = useAuthStore((state) => state.signOut);
   const {
     settingsOpen,
     setSettingsOpen,
@@ -2963,8 +2958,12 @@ function SettingsPanel() {
                 <User className="h-6 w-6" />
               </div>
               <div>
-                <div className="font-black">Master Builder</div>
-                <div className="text-sm text-gray-500">Level 7</div>
+                <div className="font-black">
+                  {authUser?.email || "Master Builder"}
+                </div>
+                <div className="text-sm text-gray-500">
+                  {authUser ? "Authenticated" : "Not signed in"}
+                </div>
               </div>
             </div>
             <div className="mt-3">
@@ -3027,6 +3026,17 @@ function SettingsPanel() {
               </div>
             ))}
           </div>
+
+          <button
+            type="button"
+            onClick={async () => {
+              await signOut();
+              setSettingsOpen(false);
+            }}
+            className="rounded-xl border-2 border-black bg-red-500 px-4 py-3 text-sm font-black text-white shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition-all hover:-translate-y-0.5 active:translate-y-0 active:shadow-none"
+          >
+            Sign Out
+          </button>
         </div>
       </div>
     </div>
@@ -3332,9 +3342,16 @@ function RotatingBuildPreview({
 
 // ─── Engineering Computation Overlay ─────────────────────────────────────────
 
-function EngineeringOverlay({ onComplete }: { onComplete: () => void }) {
+function EngineeringOverlay({
+  onComplete,
+  waitingForEngine,
+}: {
+  onComplete: () => void;
+  waitingForEngine: boolean;
+}) {
   const [progress, setProgress] = React.useState(0);
   const [phase, setPhase] = React.useState(0);
+  const didCompleteRef = React.useRef(false);
 
   const phases = [
     { label: "Generating Part Geometries", icon: "⚙️" },
@@ -3346,19 +3363,27 @@ function EngineeringOverlay({ onComplete }: { onComplete: () => void }) {
   React.useEffect(() => {
     const interval = setInterval(() => {
       setProgress((p) => {
-        if (p >= 100) {
-          clearInterval(interval);
-          setTimeout(onComplete, 300);
-          return 100;
-        }
-        const newP = p + 1.2;
-        const newPhase = Math.min(phases.length - 1, Math.floor((newP / 100) * phases.length));
-        if (newPhase !== phase) setPhase(newPhase);
-        return newP;
+        const cap = waitingForEngine ? 97 : 100;
+        const delta = waitingForEngine ? 0.8 : 1.6;
+        return Math.min(cap, p + delta);
       });
     }, 40);
     return () => clearInterval(interval);
-  }, [onComplete, phase, phases.length]);
+  }, [waitingForEngine]);
+
+  React.useEffect(() => {
+    const newPhase = Math.min(phases.length - 1, Math.floor((progress / 100) * phases.length));
+    setPhase(newPhase);
+  }, [progress, phases.length]);
+
+  React.useEffect(() => {
+    if (waitingForEngine || progress < 100 || didCompleteRef.current) {
+      return;
+    }
+    didCompleteRef.current = true;
+    const timer = setTimeout(onComplete, 300);
+    return () => clearTimeout(timer);
+  }, [onComplete, progress, waitingForEngine]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90" style={{ animation: "fadeSlideIn 0.3s ease-out" }}>
@@ -3370,7 +3395,11 @@ function EngineeringOverlay({ onComplete }: { onComplete: () => void }) {
               <span className="text-sm font-black text-white tracking-widest">NEURAL CRUNCH</span>
             </div>
             <h2 className="text-2xl font-black">Engineering Computation</h2>
-            <p className="text-sm text-gray-500 mt-1">BrickMind AI is designing your build...</p>
+            <p className="text-sm text-gray-500 mt-1">
+              {waitingForEngine
+                ? "Kimi is generating raw coordinates..."
+                : "Validating grid and snap physics..."}
+            </p>
           </div>
 
           {/* Animated brick grid */}
@@ -3399,7 +3428,7 @@ function EngineeringOverlay({ onComplete }: { onComplete: () => void }) {
                   "flex items-center gap-3 rounded-xl border-2 border-black px-3 py-2 transition-all duration-300",
                   i < phase ? "bg-green-100 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
                     : i === phase ? "bg-yellow-400 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]"
-                    : "bg-gray-100",
+                      : "bg-gray-100",
                 )}
               >
                 <span className="text-lg">{p.icon}</span>
@@ -3521,7 +3550,7 @@ function InstructionManual({
 
   const difficultyColor =
     model.difficulty === "Expert" ? "bg-red-500" :
-    model.difficulty === "Intermediate" ? "bg-yellow-400" : "bg-green-500";
+      model.difficulty === "Intermediate" ? "bg-yellow-400" : "bg-green-500";
 
   return (
     <div className="bg-[#FCF6E5]">
@@ -3610,8 +3639,8 @@ function InstructionManual({
                 className={cn(
                   "rounded-2xl border-4 border-black overflow-hidden transition-all",
                   isActive ? "bg-yellow-400 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]" :
-                  isCompleted ? "bg-green-100 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]" :
-                  "bg-white shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]",
+                    isCompleted ? "bg-green-100 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]" :
+                      "bg-white shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]",
                 )}
               >
                 {/* Step header */}
@@ -3620,7 +3649,7 @@ function InstructionManual({
                     <div className={cn(
                       "flex h-12 w-12 items-center justify-center rounded-xl border-2 border-black font-black text-lg",
                       isActive ? "bg-black text-yellow-400" :
-                      isCompleted ? "bg-green-500 text-white" : "bg-gray-100 text-black",
+                        isCompleted ? "bg-green-500 text-white" : "bg-gray-100 text-black",
                     )}>
                       {isCompleted ? <Check className="h-6 w-6" /> : step.stepNum}
                     </div>
@@ -3754,6 +3783,9 @@ function BuildGenerator() {
   const [promptInput, setPromptInput] = React.useState("");
   const [aiResponse, setAIResponse] = React.useState("");
   const [animateModel, setAnimateModel] = React.useState(false);
+  const [isGeneratingBuild, setIsGeneratingBuild] = React.useState(false);
+  const [crunchAnimationDone, setCrunchAnimationDone] = React.useState(false);
+  const [generationError, setGenerationError] = React.useState<string | null>(null);
   const instructionsRef = React.useRef<HTMLDivElement>(null);
   const previewRef = React.useRef<HTMLDivElement>(null);
 
@@ -3772,16 +3804,27 @@ function BuildGenerator() {
     return () => observer.disconnect();
   }, [buildStage, setMiniMapVisible]);
 
+  React.useEffect(() => {
+    const wipeBuilderSession = () => {
+      useAppStore.getState().resetBuild();
+    };
+    window.addEventListener("beforeunload", wipeBuilderSession);
+    return () => window.removeEventListener("beforeunload", wipeBuilderSession);
+  }, []);
+
   // Phase A: Intent Capture
   const handleSubmitPrompt = async (text: string) => {
     setBuildPrompt(text);
     setBuildStage("constraint");
+    setGenerationError(null);
+    setBuildData(null);
+    setSelectedOption(null);
+    setCurrentStep(0);
 
     // Use AI to generate an enthusiastic response
     try {
-      const result = await requestOpenAIGPTChat({
+      const result = await requestNvidiaChat({
         body: {
-          model: "gpt-4o-mini",
           messages: [
             {
               role: "system",
@@ -3789,6 +3832,7 @@ function BuildGenerator() {
             },
             { role: "user", content: `I want to build: ${text}` },
           ],
+          temperature: 0.7,
         },
       });
       setAIResponse(
@@ -3803,16 +3847,54 @@ function BuildGenerator() {
   };
 
   // Phase C: Neural Crunch
-  const handleSelectLimit = (limit: number) => {
+  const handleSelectLimit = async (limit: number) => {
     setBuildStage("crunching");
-    // Generate mock data during "crunch"
-    const data = mockGenerator(buildPrompt, limit);
-    setBuildData(data);
+    setCrunchAnimationDone(false);
+    setIsGeneratingBuild(true);
+    setGenerationError(null);
+    setBuildData(null);
+    setSelectedOption(null);
+    setCurrentStep(0);
+
+    try {
+      const data = await BrickMindEngine.Creator.generateAIBuild(buildPrompt, limit);
+      setBuildData(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown generation error.";
+      setGenerationError(message);
+      console.error("[Builder] Kimi generation failed:", error);
+    } finally {
+      setIsGeneratingBuild(false);
+    }
   };
 
   const handleCrunchComplete = () => {
-    setBuildStage("presentation");
+    setCrunchAnimationDone(true);
   };
+
+  React.useEffect(() => {
+    if (buildStage !== "crunching" || !crunchAnimationDone || isGeneratingBuild) {
+      return;
+    }
+
+    if (buildData) {
+      setBuildStage("presentation");
+      return;
+    }
+
+    const reason = generationError ? ` Reason: ${generationError}` : "";
+    setAIResponse(
+      `Neural generation failed to produce a valid model.${reason} Please choose a brick limit again to retry with a fresh seed.`
+    );
+    setBuildStage("constraint");
+  }, [
+    buildData,
+    buildStage,
+    crunchAnimationDone,
+    generationError,
+    isGeneratingBuild,
+    setBuildStage,
+  ]);
 
   // Phase D: Select option
   const handleSelectOption = (option: 0 | 1) => {
@@ -3915,6 +3997,13 @@ function BuildGenerator() {
             </div>
           </div>
 
+          {generationError && (
+            <div className="w-full max-w-lg mb-6 rounded-2xl border-4 border-black bg-red-500 p-4 text-white shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
+              <p className="text-xs font-black tracking-wide">GENERATION ERROR</p>
+              <p className="text-sm font-bold mt-1">{generationError}</p>
+            </div>
+          )}
+
           {/* Size options */}
           <div className="grid grid-cols-3 gap-4 w-full max-w-lg">
             {[
@@ -3939,7 +4028,10 @@ function BuildGenerator() {
 
       {/* ─── Phase C: Neural Crunch ─── */}
       {buildStage === "crunching" && (
-        <EngineeringOverlay onComplete={handleCrunchComplete} />
+        <EngineeringOverlay
+          onComplete={handleCrunchComplete}
+          waitingForEngine={isGeneratingBuild}
+        />
       )}
 
       {/* ─── Phase D: Dual-Option Presentation ─── */}
@@ -3994,7 +4086,7 @@ function BuildGenerator() {
                     <div className={cn(
                       "inline-block rounded-md border-2 border-black px-2 py-0.5 text-[10px] font-black text-white",
                       option.difficulty === "Expert" ? "bg-red-500" :
-                      option.difficulty === "Intermediate" ? "bg-yellow-500" : "bg-green-500",
+                        option.difficulty === "Intermediate" ? "bg-yellow-500" : "bg-green-500",
                     )}>
                       {option.difficulty}
                     </div>
@@ -4082,25 +4174,31 @@ function BuildGenerator() {
 
 // ─── LDraw 3D Part Viewer ─────────────────────────────────────────────────────
 
-function LDrawPartViewer({ partNum, colorCode }: { partNum: string; colorCode?: number }) {
+function LDrawPartViewer({ partNum, colorCode, className }: { partNum: string; colorCode?: number; className?: string }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const rendererRef = React.useRef<THREE.WebGLRenderer | null>(null);
   const animFrameRef = React.useRef<number>(0);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  // Track if we should render (simple intersection observer could go here, but for now just mount)
 
   React.useEffect(() => {
     if (!containerRef.current) return;
     const container = containerRef.current;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    // Create renderer with performance optimizations
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true,
+      powerPreference: "high-performance",
+      precision: "mediump" // Lowers memory usage
+    });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(container.clientWidth, container.clientHeight);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.enabled = false; // Disable shadows for thumbnails to save perf
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.3;
-    renderer.setClearColor(0x000000, 0);
+    renderer.setClearColor(0x000000, 0); // Transparent background
     rendererRef.current = renderer;
     container.appendChild(renderer.domElement);
 
@@ -4155,7 +4253,8 @@ function LDrawPartViewer({ partNum, colorCode }: { partNum: string; colorCode?: 
         group.position.sub(center);
 
         const maxDim = Math.max(size.x, size.y, size.z);
-        const scaleFactor = maxDim > 0 ? 2.0 / maxDim : 1;
+        // INCREASED SCALE FACTOR from 2.0 to 3.5 to make parts look bigger
+        const scaleFactor = maxDim > 0 ? 3.5 / maxDim : 1;
         group.scale.setScalar(scaleFactor);
 
         scene.add(group);
@@ -4197,22 +4296,21 @@ function LDrawPartViewer({ partNum, colorCode }: { partNum: string; colorCode?: 
       isMounted = false;
       cancelAnimationFrame(animFrameRef.current);
       window.removeEventListener("resize", handleResize);
-      controls.dispose();
-      renderer.dispose();
-      if (container.contains(renderer.domElement)) {
-        container.removeChild(renderer.domElement);
+      if (rendererRef.current) {
+        rendererRef.current.dispose();
+        rendererRef.current.forceContextLoss();
+        rendererRef.current.domElement.remove();
+        rendererRef.current = null;
       }
+      controls.dispose();
     };
   }, [partNum, colorCode]);
 
   return (
-    <div className="relative w-full h-full" ref={containerRef}>
+    <div ref={containerRef} className={cn("w-full h-full relative", className)}>
       {loading && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="flex flex-col items-center gap-2">
-            <Loader2 className="h-8 w-8 animate-spin text-yellow-500" />
-            <span className="text-xs font-bold text-gray-500">Loading 3D model...</span>
-          </div>
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-50/50">
+          <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
         </div>
       )}
       {error && (
@@ -4236,26 +4334,33 @@ function LDrawPartsBrowser() {
   const [selectedPart, setSelectedPart] = React.useState<CatalogEntry | null>(null);
   const [selectedColor, setSelectedColor] = React.useState<number>(4); // Red default
   const [loading, setLoading] = React.useState(true);
+  const [totalCount, setTotalCount] = React.useState(0);
   const [showColorPicker, setShowColorPicker] = React.useState(false);
   const [viewMode, setViewMode] = React.useState<"grid" | "list">("grid");
   const searchTimerRef = React.useRef<ReturnType<typeof setTimeout>>(null);
 
   // Load common parts on mount
+  const [page, setPage] = React.useState(1);
+  const PAGE_SIZE = 1000;
+  const loadMoreRef = React.useRef<HTMLDivElement>(null);
+
+  // Load popular parts for initial view
   React.useEffect(() => {
     (async () => {
       try {
         setLoading(true);
-        const parts = await loadCommonParts();
-        setCommonParts(parts);
-        setResults(parts);
-      } catch {
-        // If common parts fail, try loading from the full catalog
-        try {
-          const searchResults = await ldrawSearchParts("brick", 60);
-          setResults(searchResults);
-        } catch {
-          // ignore
-        }
+        // Load common parts just for the "popular" set if needed, 
+        // but primarily we want a big list now
+        const popular = await loadCommonParts();
+        setCommonParts(popular);
+
+        // Load initial large set
+        const searchResults = await ldrawSearchParts("", PAGE_SIZE);
+        const total = getCatalogTotalCount();
+        setTotalCount(total);
+        setResults(searchResults);
+      } catch (err) {
+        console.error("Failed to load parts:", err);
       } finally {
         setLoading(false);
       }
@@ -4265,19 +4370,51 @@ function LDrawPartsBrowser() {
   // Debounced search
   const handleSearch = React.useCallback((query: string) => {
     setSearchQuery(query);
+    setPage(1); // Reset page on search
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
 
     searchTimerRef.current = setTimeout(async () => {
       setLoading(true);
       if (!query.trim()) {
-        setResults(commonParts);
+        const searchResults = await ldrawSearchParts("", PAGE_SIZE);
+        setResults(searchResults);
       } else {
-        const searchResults = await ldrawSearchParts(query, 60);
+        const searchResults = await ldrawSearchParts(query, PAGE_SIZE);
         setResults(searchResults);
       }
       setLoading(false);
     }, 300);
-  }, [commonParts]);
+  }, []);
+
+  const handleLoadMore = async () => {
+    if (loading) return;
+    setLoading(true);
+    const nextPage = page + 1;
+    const offset = (nextPage - 1) * PAGE_SIZE;
+
+    // Use offset now
+    const moreResults = await ldrawSearchParts(searchQuery, PAGE_SIZE, offset);
+    setResults(prev => [...prev, ...moreResults]);
+    setPage(nextPage);
+    setLoading(false);
+  };
+
+  // Infinite Scroll Observer
+  React.useEffect(() => {
+    if (!loadMoreRef.current || loading) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && results.length > 0) {
+          handleLoadMore();
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    observer.observe(loadMoreRef.current);
+    return () => observer.disconnect();
+  }, [results.length, loading, page, searchQuery]);
 
   const popularColors = [
     { code: 4, name: "Red" },
@@ -4403,55 +4540,96 @@ function LDrawPartsBrowser() {
       {/* Results count */}
       <div className="px-4 pb-1 shrink-0">
         <span className="text-[10px] font-bold text-gray-400">
-          {results.length} parts found
+          Showing {results.length} / {totalCount || results.length} parts
           {searchQuery && ` for "${searchQuery}"`}
         </span>
       </div>
 
       {/* Selected Part Preview */}
+      {/* Selected Part Preview - Two Column Layout */}
+      {/* Selected Part Modal Overlay */}
       {selectedPart && (
-        <div className="mx-4 mb-3 shrink-0 rounded-2xl border-4 border-black bg-white overflow-hidden shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
-          {/* 3D Preview */}
-          <div className="relative bg-gradient-to-b from-gray-100 to-white" style={{ height: 280 }}>
-            <LDrawPartViewer partNum={selectedPart.p} colorCode={selectedColor} />
-            {/* Close button */}
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div
+            className="w-[95vw] max-w-[1400px] h-[85vh] md:h-[90vh] rounded-3xl border-4 border-black bg-white overflow-hidden shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] flex flex-col md:flex-row relative animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close Button Mobile/Overlay Catch-all */}
             <button
+              className="absolute top-0 right-0 p-4 md:hidden z-50"
               onClick={() => setSelectedPart(null)}
-              className="absolute top-2 right-2 rounded-lg border-2 border-black bg-white p-1 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 transition-all active:translate-y-0 active:shadow-none"
             >
-              <X className="h-4 w-4" />
+              <div className="rounded-full bg-white border-2 border-black p-1 shadow-md">
+                <X className="h-5 w-5" />
+              </div>
             </button>
-          </div>
-          {/* Part Info */}
-          <div className="border-t-4 border-black px-4 py-3">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="rounded-md border-2 border-black bg-yellow-400 px-2 py-0.5 text-[10px] font-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                    #{selectedPart.p}
-                  </span>
-                  <div
-                    className="h-4 w-4 rounded-full border-2 border-black"
-                    style={{ backgroundColor: currentColor.value }}
-                    title={currentColor.name}
-                  />
+
+            {/* Left Column: Info & Controls */}
+            <div className="w-full md:w-1/3 border-b-4 md:border-b-0 md:border-r-4 border-black p-6 flex flex-col gap-6 overflow-y-auto bg-gray-50 max-h-[40vh] md:max-h-full">
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="rounded-md border-2 border-black bg-yellow-400 px-2.5 py-1 text-xs font-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
+                      #{selectedPart.p}
+                    </span>
+                  </div>
+                  <h3 className="text-xl font-black leading-tight mb-2">{selectedPart.d}</h3>
+                  {selectedPart.c && (
+                    <span className="text-sm text-gray-500 font-bold block">{selectedPart.c}</span>
+                  )}
                 </div>
-                <h3 className="text-sm font-black leading-tight">{selectedPart.d}</h3>
-                {selectedPart.c && (
-                  <span className="text-[10px] text-gray-500 font-bold">{selectedPart.c}</span>
-                )}
+              </div>
+
+              {/* Current Color Indicator */}
+              <div className="flex items-center gap-3 bg-white p-4 rounded-xl border-2 border-gray-200 shadow-sm">
+                <div
+                  className="h-10 w-10 rounded-full border-2 border-black shadow-sm"
+                  style={{ backgroundColor: currentColor.value }}
+                />
+                <div>
+                  <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">SELECTED COLOR</div>
+                  <div className="text-base font-black">{currentColor.name}</div>
+                </div>
+              </div>
+
+              {/* Keywords */}
+              {selectedPart.k && selectedPart.k.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">KEYWORDS</div>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedPart.k.map((kw, i) => (
+                      <span key={i} className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-gray-500">
+                        {kw}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Right Column: 3D Preview */}
+            <div className="w-full md:w-2/3 h-[50vh] md:h-auto min-h-[400px] relative bg-gradient-to-b from-gray-100 to-white flex items-center justify-center">
+              <div className="w-full h-full">
+                <LDrawPartViewer partNum={selectedPart.p} colorCode={selectedColor} className="w-full h-full" />
+              </div>
+
+              {/* Desktop Close Button */}
+              <button
+                onClick={() => setSelectedPart(null)}
+                className="hidden md:flex absolute top-4 right-4 rounded-xl border-2 border-black bg-white p-2 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 transition-all active:translate-y-0 active:shadow-none z-10"
+              >
+                <X className="h-6 w-6" />
+              </button>
+
+              <div className="absolute bottom-4 right-4 pointer-events-none">
+                <div className="bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-lg border-2 border-black/10 text-xs font-bold text-gray-400">
+                  Interact to Rotate/Zoom
+                </div>
               </div>
             </div>
-            {selectedPart.k && selectedPart.k.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-2">
-                {selectedPart.k.map((kw, i) => (
-                  <span key={i} className="rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[9px] font-bold text-gray-500">
-                    {kw}
-                  </span>
-                ))}
-              </div>
-            )}
           </div>
+          {/* Backdrop Click to Close */}
+          <div className="absolute inset-0 z-[-1]" onClick={() => setSelectedPart(null)}></div>
         </div>
       )}
 
@@ -4468,14 +4646,31 @@ function LDrawPartsBrowser() {
                   selectedPart?.p === part.p && "bg-yellow-50 border-yellow-500"
                 )}
               >
-                {/* Thumbnail placeholder */}
+                {/* Thumbnail 2D Image */}
                 <div
-                  className="w-full aspect-square rounded-lg border-2 border-gray-200 bg-gradient-to-b from-gray-50 to-gray-100 mb-2 flex items-center justify-center overflow-hidden"
+                  className="w-full aspect-square rounded-lg border-2 border-gray-200 bg-white mb-2 overflow-hidden relative group-hover:border-yellow-400 transition-colors p-2 flex items-center justify-center"
                 >
-                  <div className="text-center">
-                    <div className="text-2xl mb-0.5">🧱</div>
-                    <span className="text-[8px] font-bold text-gray-400">#{part.p}</span>
-                  </div>
+                  <img
+                    src={rebrickableClient.getPartSilhouetteUrl(part.p)}
+                    alt={part.d}
+                    className="w-full h-full object-contain"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      // Try BrickLink fallback if sending Rebrickable failed
+                      const brickLinkUrl = rebrickableClient.getBrickLinkImageUrl(part.p);
+                      if (target.src !== brickLinkUrl) {
+                        target.src = brickLinkUrl;
+                      } else {
+                        // If BrickLink also fails, show fallback
+                        target.style.display = 'none';
+                        target.parentElement?.classList.add('bg-gray-100');
+                        const placeholder = document.createElement('div');
+                        placeholder.className = 'text-center';
+                        placeholder.innerHTML = '<div class="text-2xl mb-0.5">🧱</div><span class="text-[8px] font-bold text-gray-400">#' + part.p + '</span>';
+                        target.parentElement?.appendChild(placeholder);
+                      }
+                    }}
+                  />
                 </div>
                 <div className="text-[10px] font-black leading-tight truncate" title={part.d}>
                   {part.d}
@@ -4497,8 +4692,27 @@ function LDrawPartsBrowser() {
                   selectedPart?.p === part.p && "bg-yellow-50 border-yellow-500"
                 )}
               >
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg border-2 border-gray-200 bg-gray-50 shrink-0">
-                  <span className="text-lg">🧱</span>
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg border-2 border-gray-200 bg-white shrink-0 overflow-hidden relative p-1">
+                  <img
+                    src={rebrickableClient.getPartSilhouetteUrl(part.p)}
+                    alt={part.d}
+                    className="w-full h-full object-contain"
+                    onError={(e) => {
+                      // Same fallback for list view
+                      const target = e.currentTarget;
+                      const brickLinkUrl = rebrickableClient.getBrickLinkImageUrl(part.p);
+                      if (target.src !== brickLinkUrl) {
+                        target.src = brickLinkUrl;
+                      } else {
+                        target.style.display = 'none';
+                        target.parentElement?.classList.add('bg-gray-50');
+                        const placeholder = document.createElement('span');
+                        placeholder.className = 'text-lg';
+                        placeholder.innerText = '🧱';
+                        target.parentElement?.appendChild(placeholder);
+                      }
+                    }}
+                  />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-xs font-black truncate">{part.d}</div>
@@ -4525,6 +4739,24 @@ function LDrawPartsBrowser() {
             <p className="text-xs text-gray-400 mt-1">Try a different search term</p>
           </div>
         )}
+
+        {/* Infinite Scroll Trigger */}
+        <div ref={loadMoreRef} className="flex justify-center mt-4 mb-12 py-8 min-h-[100px]">
+          {loading && results.length > 0 && (
+            <div className="flex flex-col items-center gap-2">
+              <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+              <span className="text-xs font-bold text-gray-400">Loading more parts...</span>
+            </div>
+          )}
+          {!loading && results.length >= PAGE_SIZE && (
+            <button
+              onClick={handleLoadMore}
+              className="rounded-xl border-2 border-black bg-white px-8 py-3 text-sm font-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 transition-all active:translate-y-0 active:shadow-none"
+            >
+              Click or Scroll to Load More
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -4533,6 +4765,7 @@ function LDrawPartsBrowser() {
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
 function Dashboard() {
+  const authUserId = useAuthStore((state) => state.user?.id);
   const {
     sidebarOpen,
     sidebarTab,
@@ -4563,10 +4796,14 @@ function Dashboard() {
   >([]);
 
   React.useEffect(() => {
+    if (!authUserId) {
+      return;
+    }
+
     (async () => {
       try {
         const brickOrm = BrickCollectionORM.getInstance();
-        const bricks = await brickOrm.getAllBrickCollection();
+        const bricks = await brickOrm.getBrickCollectionByUserId(authUserId);
         setCollectionData(
           bricks.map((b) => ({
             brick_type: b.brick_type,
@@ -4579,7 +4816,7 @@ function Dashboard() {
       }
       try {
         const buildOrm = SavedBuildORM.getInstance();
-        const builds = await buildOrm.getAllSavedBuild();
+        const builds = await buildOrm.getSavedBuildByUserId(authUserId);
         setSavedBuilds(
           builds.map((b) => ({
             title: b.title,
@@ -4591,9 +4828,13 @@ function Dashboard() {
         // ignore
       }
     })();
-  }, []);
+  }, [authUserId]);
 
   React.useEffect(() => {
+    if (!authUserId) {
+      return;
+    }
+
     (async () => {
       try {
         const chatOrm = ChatMessageORM.getInstance();
@@ -4612,7 +4853,7 @@ function Dashboard() {
         // ignore
       }
     })();
-  }, [sessionId]);
+  }, [authUserId, sessionId]);
 
   React.useEffect(() => {
     if (scrollRef.current) {
@@ -4627,7 +4868,7 @@ function Dashboard() {
 
   const handleSend = async () => {
     const text = inputValue.trim();
-    if (!text || sending) return;
+    if (!text || sending || !authUserId) return;
 
     setInputValue("");
     setSending(true);
@@ -4645,7 +4886,7 @@ function Dashboard() {
     try {
       await chatOrm.insertChatMessage([
         {
-          user_id: "current-user",
+          user_id: authUserId,
           session_id: sessionId,
           role: ChatMessageRole.User,
           text_content: text,
@@ -4664,9 +4905,8 @@ function Dashboard() {
         { role: "user" as const, content: text },
       ];
 
-      const result = await requestOpenAIGPTChat({
+      const result = await requestNvidiaChat({
         body: {
-          model: "gpt-4o-mini",
           messages: [
             {
               role: "system",
@@ -4675,9 +4915,13 @@ function Dashboard() {
             },
             ...chatHistory,
           ],
+          temperature: 0.7,
         },
       });
 
+      if (result.error) {
+        console.error("[NVIDIA AI] Chat error:", result.error);
+      }
       const aiContent =
         result.data?.choices?.[0]?.message?.content ||
         "That sounds like a great collection! Based on what you've described, here are some builds you could try:\n\n1. **Mini City Block** (Easy) - Perfect for beginners!\n2. **Space Shuttle** (Medium) - A classic build with great details.\n3. **Medieval Castle** (Hard) - An ambitious project that'll look amazing!";
@@ -4693,7 +4937,7 @@ function Dashboard() {
       try {
         await chatOrm.insertChatMessage([
           {
-            user_id: "current-user",
+            user_id: authUserId,
             session_id: sessionId,
             role: ChatMessageRole.Assistant,
             text_content: aiContent,
@@ -5023,7 +5267,7 @@ function Dashboard() {
                         className={cn(
                           "rounded-lg border-2 border-black px-2 py-0.5 text-xs font-bold",
                           difficultyColors[build.difficulty_level] ||
-                            "bg-gray-200",
+                          "bg-gray-200",
                         )}
                       >
                         {difficultyLabels[build.difficulty_level] || "Unknown"}
@@ -5049,7 +5293,63 @@ function Dashboard() {
 // ─── Main App ────────────────────────────────────────────────────────────────
 
 function App() {
+  const authStatus = useAuthStore((state) => state.status);
+  const initializeAuth = useAuthStore((state) => state.initialize);
   const { view, isTransitioning } = useAppStore();
+  const [showInitialLoad, setShowInitialLoad] = React.useState(true);
+  const [authScreenMode, setAuthScreenMode] = React.useState<
+    "signin" | "signup" | null
+  >(null);
+
+  React.useEffect(() => {
+    void initializeAuth();
+  }, [initializeAuth]);
+
+  React.useEffect(() => {
+    // Force light mode and white background on body to prevent "darkness"
+    document.documentElement.classList.remove('dark');
+    document.body.classList.remove('dark');
+    document.body.style.backgroundColor = '#ffffff';
+
+    const timer = setTimeout(() => setShowInitialLoad(false), 3000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  React.useEffect(() => {
+    if (authStatus === "authenticated") {
+      setAuthScreenMode(null);
+    }
+  }, [authStatus]);
+
+  if (authStatus === "loading") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#FCF6E5]">
+        <div className="flex items-center gap-3 rounded-2xl border-4 border-black bg-white px-5 py-4 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <span className="text-sm font-black">Loading account...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (authStatus !== "authenticated") {
+    if (authScreenMode) {
+      return (
+        <AuthScreen
+          defaultMode={authScreenMode}
+          onBack={() => setAuthScreenMode(null)}
+        />
+      );
+    }
+
+    return (
+      <LandingPage
+        onEnter={() => setAuthScreenMode("signin")}
+        onOpenAuth={(mode) => setAuthScreenMode(mode)}
+        showAuthActions
+      />
+    );
+  }
 
   return (
     <div className="relative h-screen w-full">
@@ -5099,11 +5399,109 @@ function App() {
           50% { transform: scale(1.15); }
           100% { transform: scale(1); }
         }
+        @keyframes scrollVertical {
+          0% { transform: translateY(0); }
+          100% { transform: translateY(-33.33%); }
+        }
+        @keyframes scrollVerticalReverse {
+          0% { transform: translateY(-33.33%); }
+          100% { transform: translateY(0); }
+        }
+        .animate-scroll-vertical {
+          animation: scrollVertical 30s linear infinite;
+        }
+        .animate-scroll-vertical-reverse {
+          animation: scrollVerticalReverse 30s linear infinite;
+        }
       `}</style>
+      {/* Loading Screen Overlay */}
+      <AnimatePresence>
+        {showInitialLoad && (
+          <motion.div
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.5 }}
+            className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#FCF6E5]"
+          >
+            {/* Falling Bricks Background */}
+            <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-20">
+              {[...Array(20)].map((_, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ y: -100, rotate: 0 }}
+                  animate={{
+                    y: "110vh",
+                    rotate: 360,
+                    transition: {
+                      duration: 2 + Math.random() * 3,
+                      repeat: Infinity,
+                      ease: "linear",
+                      delay: Math.random() * 2
+                    }
+                  }}
+                  className="absolute h-8 w-8 rounded-md border-2 border-black"
+                  style={{
+                    left: `${Math.random() * 100}%`,
+                    backgroundColor: ['#B40000', '#1E5AA8', '#FAC80A', '#00852B', '#D67923'][i % 5]
+                  }}
+                />
+              ))}
+            </div>
+
+            <div className="relative z-10 flex flex-col items-center max-w-sm px-6 text-center">
+              {/* Animated Building Logo */}
+              <motion.div
+                animate={{ scale: [1, 1.1, 1] }}
+                transition={{ duration: 1, repeat: Infinity }}
+                className="mb-8 flex h-20 w-20 items-center justify-center rounded-2xl border-4 border-black bg-yellow-400 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]"
+              >
+                <Boxes className="h-10 w-10" />
+              </motion.div>
+
+              <h1 className="text-2xl font-black mb-1">BrickMind</h1>
+              <p className="text-[11px] font-bold text-gray-500 mb-8 uppercase tracking-widest">
+                Engine Optimization in Progress
+              </p>
+
+              {/* Custom Progress Bar */}
+              <div className="w-64 h-5 rounded-full border-[3px] border-black bg-white overflow-hidden shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] mb-4">
+                <motion.div
+                  className="h-full bg-red-500 border-r-[3px] border-black"
+                  initial={{ width: 0 }}
+                  animate={{ width: "100%" }}
+                  transition={{ duration: 2.5, ease: "easeInOut" }}
+                />
+              </div>
+
+              <div className="text-[10px] font-black text-gray-400 mb-10 h-4">
+                {/* Animated loading text could be here, but keeping it simple for now */}
+                Parsing 23,000+ LEGO Parts...
+              </div>
+
+              {/* Performance Warning */}
+              <motion.div
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 1 }}
+                className="rounded-xl border-2 border-black bg-white p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+              >
+                <div className="flex items-center gap-2 mb-2 justify-center">
+                  <Zap className="h-4 w-4 text-yellow-500 fill-yellow-500" />
+                  <span className="text-[10px] font-black uppercase tracking-wider text-black">High Performance Mode</span>
+                </div>
+                <p className="text-[11px] font-bold text-gray-600 leading-relaxed">
+                  This application renders complex 3D LEGO models.
+                  A decent computer is recommended for smooth interactions.
+                </p>
+              </motion.div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div
         className={cn(
-          "h-full w-full transition-all duration-400",
+          "h-full w-full transition-all duration-400 bg-white",
           isTransitioning && "scale-95 opacity-0",
         )}
         style={{

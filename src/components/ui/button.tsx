@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { useDelegatedComponentEventHandler } from "@/sdk/core/internal/creao-shell";
+import { useDelegatedComponentEventHandler } from "@/sdk/core/internal/shell";
 import { Slot } from "@radix-ui/react-slot";
 import { type VariantProps, cva } from "class-variance-authority";
 import type * as React from "react";

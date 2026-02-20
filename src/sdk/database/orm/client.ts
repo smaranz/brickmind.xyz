@@ -35,7 +35,9 @@ import type {
   CountRankedListResponse,
 } from "./common";
 
-const BASE_URL = "https://api-production.creao.ai";
+import { PLATFORM_API_BASE } from "@/sdk/core/config";
+
+const BASE_URL = PLATFORM_API_BASE;
 const BASE_TIMEOUT = 30000;
 
 
